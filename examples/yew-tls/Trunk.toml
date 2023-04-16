@@ -1,0 +1,7 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+[serve]
+tls_private_key_path = "self_signed_certs/key.pem"
+tls_public_key_path = "self_signed_certs/cert.pem"

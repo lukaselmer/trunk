@@ -1,6 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::body::{self, Body};
@@ -9,6 +10,8 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{get, get_service, Router};
 use axum::Server;
+use axum_server::tls_rustls::RustlsConfig;
+use axum_server::Handle;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tower_http::services::{ServeDir, ServeFile};
@@ -30,6 +33,13 @@ pub struct ServeSystem {
     //  N.B. we use a broadcast channel here because a watch channel triggers a
     //  false positive on the first read of channel
     build_done_chan: broadcast::Sender<()>,
+    tls: Option<TLSCertificatePaths>,
+}
+
+#[derive(Clone)]
+struct TLSCertificatePaths {
+    private_key_path: PathBuf,
+    public_key_path: PathBuf,
 }
 
 impl ServeSystem {
@@ -42,9 +52,20 @@ impl ServeSystem {
             Some(build_done_chan.clone()),
         )
         .await?;
+        let tls = match (
+            cfg.tls_private_key_path.clone(),
+            cfg.tls_public_key_path.clone(),
+        ) {
+            (Some(a), Some(b)) => Some(TLSCertificatePaths {
+                private_key_path: cfg.target_parent.join(a),
+                public_key_path: cfg.target_parent.join(b),
+            }),
+            _ => None,
+        };
+        let prefix = if tls.is_some() { "https" } else { "http" };
         let http_addr = format!(
-            "http://{}:{}{}",
-            cfg.address, cfg.port, &cfg.watch.build.public_url
+            "{}://{}:{}{}",
+            prefix, cfg.address, cfg.port, &cfg.watch.build.public_url
         );
         Ok(Self {
             cfg,
@@ -52,6 +73,7 @@ impl ServeSystem {
             http_addr,
             shutdown_tx: shutdown,
             build_done_chan,
+            tls,
         })
     }
 
@@ -65,7 +87,9 @@ impl ServeSystem {
             self.cfg.clone(),
             self.shutdown_tx.subscribe(),
             self.build_done_chan,
-        )?;
+            self.tls.clone(),
+        )
+        .await?;
 
         // Open the browser.
         if self.cfg.open {
@@ -83,17 +107,21 @@ impl ServeSystem {
         Ok(())
     }
 
-    #[tracing::instrument(level = "trace", skip(cfg, shutdown_rx))]
-    fn spawn_server(
+    #[tracing::instrument(level = "trace", skip(cfg, shutdown_rx, tls))]
+    async fn spawn_server(
         cfg: Arc<RtcServe>,
         mut shutdown_rx: broadcast::Receiver<()>,
         build_done_chan: broadcast::Sender<()>,
+        tls: Option<TLSCertificatePaths>,
     ) -> Result<JoinHandle<()>> {
         // Build a shutdown signal for the warp server.
+        let graceful_shutdown_handle = Handle::new();
+        let handle_clone = graceful_shutdown_handle.clone();
         let shutdown_fut = async move {
             // Any event on this channel, even a drop, should trigger shutdown.
             let _res = shutdown_rx.recv().await;
             tracing::debug!("server is shutting down");
+            handle_clone.graceful_shutdown(Some(Duration::from_secs(0)));
         };
 
         // Build the proxy client.
@@ -119,10 +147,40 @@ impl ServeSystem {
         ));
         let router = router(state, cfg.clone());
         let addr = (cfg.address, cfg.port).into();
-        let server = Server::bind(&addr)
-            .serve(router.into_make_service())
-            .with_graceful_shutdown(shutdown_fut);
 
+        let mut http_server: Option<_> = None;
+        let mut https_server: Option<_> = None;
+        if let Some(tls) = tls.clone() {
+            // Configure certificate and private key used by https
+            tracing::info!("🔐 Private key {}", tls.private_key_path.display(),);
+            tracing::info!("🔒 Public key {}", tls.public_key_path.display());
+            let tls_config =
+                RustlsConfig::from_pem_file(tls.public_key_path, tls.private_key_path).await;
+
+            match tls_config {
+                Ok(tls_config) => {
+                    // Spawn a task to gracefully shutdown server.
+                    tokio::spawn(shutdown_fut);
+                    https_server = Some(
+                        axum_server::bind_rustls(addr, tls_config)
+                            .handle(graceful_shutdown_handle)
+                            .serve(router.into_make_service()),
+                    );
+                }
+                Err(error) => {
+                    tracing::error!("Error loading TLS certificate");
+                    return Err(error.into());
+                }
+            }
+        } else {
+            http_server = Some(
+                Server::bind(&addr)
+                    .serve(router.into_make_service())
+                    .with_graceful_shutdown(shutdown_fut),
+            );
+        }
+
+        let prefix = if tls.is_some() { "https" } else { "http" };
         if addr.ip().is_unspecified() {
             let addresses = local_ip_address::list_afinet_netifas()
                 .map(|addrs| {
@@ -141,12 +199,13 @@ impl ServeSystem {
                 addresses
                     .iter()
                     .map(|address| format!(
-                        "    {} http://{}:{}",
+                        "    {} {}://{}:{}",
                         if address.is_loopback() {
                             LOCAL
                         } else {
                             NETWORK
                         },
+                        prefix,
                         address,
                         cfg.port
                     ))
@@ -154,12 +213,19 @@ impl ServeSystem {
                     .join("\n")
             );
         } else {
-            tracing::info!("{} server listening at http://{}", SERVER, addr);
+            tracing::info!("{} server listening at {}://{}", SERVER, prefix, addr);
         }
         // Block this routine on the server's completion.
         Ok(tokio::spawn(async move {
-            if let Err(err) = server.await {
-                tracing::error!(error = ?err, "error from server task");
+            if let Some(server) = http_server {
+                if let Err(err) = server.await {
+                    tracing::error!(error = ?err, "error from server task");
+                }
+            }
+            if let Some(server) = https_server {
+                if let Err(err) = server.await {
+                    tracing::error!(error = ?err, "error from server task");
+                }
             }
         }))
     }

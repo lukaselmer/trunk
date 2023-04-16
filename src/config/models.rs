@@ -126,6 +126,16 @@ pub struct ConfigOptsServe {
     #[arg(long = "no-autoreload")]
     #[serde(default)]
     pub no_autoreload: bool,
+    /// The URI on which to accept requests which are to be rewritten and proxied to backend
+    /// [default: None]
+    #[arg(long = "tls-private-key-path")]
+    #[serde(default)]
+    pub tls_private_key_path: Option<String>,
+    /// The URI on which to accept requests which are to be rewritten and proxied to backend
+    /// [default: None]
+    #[arg(long = "tls-public-key-path")]
+    #[serde(default)]
+    pub tls_public_key_path: Option<String>,
 }
 
 /// Config options for the serve system.
@@ -335,6 +345,8 @@ impl ConfigOpts {
             proxy_insecure: cli.proxy_insecure,
             proxy_ws: cli.proxy_ws,
             no_autoreload: cli.no_autoreload,
+            tls_private_key_path: cli.tls_private_key_path,
+            tls_public_key_path: cli.tls_public_key_path,
         };
         let cfg = ConfigOpts {
             build: None,
@@ -501,6 +513,8 @@ impl ConfigOpts {
                 g.address = g.address.or(l.address);
                 g.port = g.port.or(l.port);
                 g.proxy_ws = g.proxy_ws || l.proxy_ws;
+                g.tls_private_key_path = g.tls_private_key_path.or(l.tls_private_key_path);
+                g.tls_public_key_path = g.tls_public_key_path.or(l.tls_public_key_path);
                 // NOTE: this can not be disabled in the cascade.
                 if l.no_autoreload {
                     g.no_autoreload = true;

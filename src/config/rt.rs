@@ -252,6 +252,12 @@ pub struct RtcServe {
     pub proxies: Option<Vec<ConfigOptsProxy>>,
     /// Whether to disable auto-reload of the web page when a build completes.
     pub no_autoreload: bool,
+    /// The path to the private key. TLS is activated if both are set.
+    pub tls_private_key_path: Option<String>,
+    /// The path to the public key. TLS is activated if both are set.
+    pub tls_public_key_path: Option<String>,
+    /// The parent directory of the target index HTML file.
+    pub target_parent: PathBuf,
 }
 
 impl RtcServe {
@@ -263,6 +269,25 @@ impl RtcServe {
         hooks: Vec<ConfigOptsHook>,
         proxies: Option<Vec<ConfigOptsProxy>>,
     ) -> Result<Self> {
+        // Get the canonical path to the target HTML file.
+        let pre_target = build_opts
+            .target
+            .clone()
+            .unwrap_or_else(|| "index.html".into());
+        let target = pre_target.canonicalize().with_context(|| {
+            format!(
+                "error getting canonical path to source HTML file {:?}",
+                &pre_target
+            )
+        })?;
+
+        // Get the target HTML's parent dir, falling back to OS specific root, as that is the only
+        // time where no parent could be determined.
+        let target_parent = target
+            .parent()
+            .map(|path| path.to_owned())
+            .unwrap_or_else(|| PathBuf::from(std::path::MAIN_SEPARATOR.to_string()));
+
         let watch = Arc::new(RtcWatch::new(
             build_opts,
             watch_opts,
@@ -281,6 +306,9 @@ impl RtcServe {
             proxy_ws: opts.proxy_ws,
             proxies,
             no_autoreload: opts.no_autoreload,
+            tls_private_key_path: opts.tls_private_key_path,
+            tls_public_key_path: opts.tls_public_key_path,
+            target_parent,
         })
     }
 }

@@ -12,6 +12,7 @@ Subheadings to categorize changes are `added, changed, deprecated, removed, fixe
 - Added tailwindcss support via `rel="tailwind-css"`.
 - Added support for `svg` files when using `rel="inline"`
 - Print all acessible addresses if `0.0.0.0` is used.
+- Added TLS support for `trunk serve` via `tls_private_key_path`/`tls_private_key_path`.
 
 ### changed
 - Updated gloo-worker example to use gloo-worker crate v2.1.
