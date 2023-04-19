@@ -10,7 +10,6 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{get, get_service, Router};
 use axum::Server;
-use axum_server::tls_rustls::RustlsConfig;
 use axum_server::Handle;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -33,13 +32,6 @@ pub struct ServeSystem {
     //  N.B. we use a broadcast channel here because a watch channel triggers a
     //  false positive on the first read of channel
     build_done_chan: broadcast::Sender<()>,
-    tls: Option<TLSCertificatePaths>,
-}
-
-#[derive(Clone)]
-struct TLSCertificatePaths {
-    tls_key_path: PathBuf,
-    tls_cert_path: PathBuf,
 }
 
 impl ServeSystem {
@@ -52,14 +44,7 @@ impl ServeSystem {
             Some(build_done_chan.clone()),
         )
         .await?;
-        let tls = match (cfg.tls_key_path.clone(), cfg.tls_cert_path.clone()) {
-            (Some(tls_key_path), Some(tls_cert_path)) => Some(TLSCertificatePaths {
-                tls_key_path,
-                tls_cert_path,
-            }),
-            _ => None,
-        };
-        let prefix = if tls.is_some() { "https" } else { "http" };
+        let prefix = if cfg.tls.is_some() { "https" } else { "http" };
         let http_addr = format!(
             "{}://{}:{}{}",
             prefix, cfg.address, cfg.port, &cfg.watch.build.public_url
@@ -70,7 +55,6 @@ impl ServeSystem {
             http_addr,
             shutdown_tx: shutdown,
             build_done_chan,
-            tls,
         })
     }
 
@@ -84,7 +68,6 @@ impl ServeSystem {
             self.cfg.clone(),
             self.shutdown_tx.subscribe(),
             self.build_done_chan,
-            self.tls.clone(),
         )
         .await?;
 
@@ -104,12 +87,11 @@ impl ServeSystem {
         Ok(())
     }
 
-    #[tracing::instrument(level = "trace", skip(cfg, shutdown_rx, tls))]
+    #[tracing::instrument(level = "trace", skip(cfg, shutdown_rx))]
     async fn spawn_server(
         cfg: Arc<RtcServe>,
         mut shutdown_rx: broadcast::Receiver<()>,
         build_done_chan: broadcast::Sender<()>,
-        tls: Option<TLSCertificatePaths>,
     ) -> Result<JoinHandle<()>> {
         // Build a shutdown signal for the warp server.
         let graceful_shutdown_handle = Handle::new();
@@ -147,27 +129,14 @@ impl ServeSystem {
 
         let mut http_server: Option<_> = None;
         let mut https_server: Option<_> = None;
-        if let Some(tls) = tls.clone() {
-            // Configure certificate and private key used by https
-            tracing::info!("🔐 Private key {}", tls.tls_key_path.display(),);
-            tracing::info!("🔒 Public key {}", tls.tls_cert_path.display());
-            let tls_config = RustlsConfig::from_pem_file(tls.tls_cert_path, tls.tls_key_path).await;
-
-            match tls_config {
-                Ok(tls_config) => {
-                    // Spawn a task to gracefully shutdown server.
-                    tokio::spawn(shutdown_fut);
-                    https_server = Some(
-                        axum_server::bind_rustls(addr, tls_config)
-                            .handle(graceful_shutdown_handle)
-                            .serve(router.into_make_service()),
-                    );
-                }
-                Err(error) => {
-                    tracing::error!("Error loading TLS certificate");
-                    return Err(error.into());
-                }
-            }
+        if let Some(tls_config) = cfg.tls.clone() {
+            // Spawn a task to gracefully shutdown server.
+            tokio::spawn(shutdown_fut);
+            https_server = Some(
+                axum_server::bind_rustls(addr, tls_config)
+                    .handle(graceful_shutdown_handle)
+                    .serve(router.into_make_service()),
+            );
         } else {
             http_server = Some(
                 Server::bind(&addr)
@@ -176,7 +145,7 @@ impl ServeSystem {
             );
         }
 
-        let prefix = if tls.is_some() { "https" } else { "http" };
+        let prefix = if cfg.tls.is_some() { "https" } else { "http" };
         if addr.ip().is_unspecified() {
             let addresses = local_ip_address::list_afinet_netifas()
                 .map(|addrs| {

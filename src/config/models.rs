@@ -250,7 +250,7 @@ impl ConfigOpts {
     }
 
     /// Extract the runtime config for the serve system based on all config layers.
-    pub fn rtc_serve(
+    pub async fn rtc_serve(
         cli_build: ConfigOptsBuild,
         cli_watch: ConfigOptsWatch,
         cli_serve: ConfigOptsServe,
@@ -265,14 +265,17 @@ impl ConfigOpts {
         let serve_opts = serve_layer.serve.unwrap_or_default();
         let tools_opts = serve_layer.tools.unwrap_or_default();
         let hooks_opts = serve_layer.hooks.unwrap_or_default();
-        Ok(Arc::new(RtcServe::new(
-            build_opts,
-            watch_opts,
-            serve_opts,
-            tools_opts,
-            hooks_opts,
-            serve_layer.proxy,
-        )?))
+        Ok(Arc::new(
+            RtcServe::new(
+                build_opts,
+                watch_opts,
+                serve_opts,
+                tools_opts,
+                hooks_opts,
+                serve_layer.proxy,
+            )
+            .await?,
+        ))
     }
 
     /// Extract the runtime config for the clean system based on all config layers.
