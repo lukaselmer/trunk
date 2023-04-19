@@ -38,8 +38,8 @@ pub struct ServeSystem {
 
 #[derive(Clone)]
 struct TLSCertificatePaths {
-    private_key_path: PathBuf,
-    public_key_path: PathBuf,
+    tls_key_path: PathBuf,
+    tls_cert_path: PathBuf,
 }
 
 impl ServeSystem {
@@ -52,13 +52,10 @@ impl ServeSystem {
             Some(build_done_chan.clone()),
         )
         .await?;
-        let tls = match (
-            cfg.tls_private_key_path.clone(),
-            cfg.tls_public_key_path.clone(),
-        ) {
-            (Some(a), Some(b)) => Some(TLSCertificatePaths {
-                private_key_path: cfg.target_parent.join(a),
-                public_key_path: cfg.target_parent.join(b),
+        let tls = match (cfg.tls_key_path.clone(), cfg.tls_cert_path.clone()) {
+            (Some(tls_key_path), Some(tls_cert_path)) => Some(TLSCertificatePaths {
+                tls_key_path,
+                tls_cert_path,
             }),
             _ => None,
         };
@@ -152,10 +149,9 @@ impl ServeSystem {
         let mut https_server: Option<_> = None;
         if let Some(tls) = tls.clone() {
             // Configure certificate and private key used by https
-            tracing::info!("🔐 Private key {}", tls.private_key_path.display(),);
-            tracing::info!("🔒 Public key {}", tls.public_key_path.display());
-            let tls_config =
-                RustlsConfig::from_pem_file(tls.public_key_path, tls.private_key_path).await;
+            tracing::info!("🔐 Private key {}", tls.tls_key_path.display(),);
+            tracing::info!("🔒 Public key {}", tls.tls_cert_path.display());
+            let tls_config = RustlsConfig::from_pem_file(tls.tls_cert_path, tls.tls_key_path).await;
 
             match tls_config {
                 Ok(tls_config) => {

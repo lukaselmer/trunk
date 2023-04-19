@@ -126,16 +126,12 @@ pub struct ConfigOptsServe {
     #[arg(long = "no-autoreload")]
     #[serde(default)]
     pub no_autoreload: bool,
-    /// The URI on which to accept requests which are to be rewritten and proxied to backend
-    /// [default: None]
-    #[arg(long = "tls-private-key-path")]
-    #[serde(default)]
-    pub tls_private_key_path: Option<String>,
-    /// The URI on which to accept requests which are to be rewritten and proxied to backend
-    /// [default: None]
-    #[arg(long = "tls-public-key-path")]
-    #[serde(default)]
-    pub tls_public_key_path: Option<String>,
+    /// The TLS key file to enable TLS encryption [default: None]
+    #[arg(long)]
+    pub tls_key_path: Option<PathBuf>,
+    /// The TLS cert file to enable TLS encryption [default: None]
+    #[arg(long)]
+    pub tls_cert_path: Option<PathBuf>,
 }
 
 /// Config options for the serve system.
@@ -345,8 +341,8 @@ impl ConfigOpts {
             proxy_insecure: cli.proxy_insecure,
             proxy_ws: cli.proxy_ws,
             no_autoreload: cli.no_autoreload,
-            tls_private_key_path: cli.tls_private_key_path,
-            tls_public_key_path: cli.tls_public_key_path,
+            tls_key_path: cli.tls_key_path,
+            tls_cert_path: cli.tls_cert_path,
         };
         let cfg = ConfigOpts {
             build: None,
@@ -420,6 +416,30 @@ impl ConfigOpts {
                 if let Some(dist) = build.dist.as_mut() {
                     if !dist.is_absolute() {
                         *dist = parent.join(&dist);
+                    }
+                }
+            }
+            if let Some(serve) = cfg.serve.as_mut() {
+                if let Some(tls_key_path) = serve.tls_key_path.as_mut() {
+                    if !tls_key_path.is_absolute() {
+                        *tls_key_path =
+                            std::fs::canonicalize(parent.join(&tls_key_path)).with_context(|| {
+                                format!(
+                                    "error taking canonical path to [serve].tls_key_path {:?} in {:?}",
+                                    tls_key_path, trunk_toml_path
+                                )
+                            })?;
+                    }
+                }
+                if let Some(tls_cert_path) = serve.tls_cert_path.as_mut() {
+                    if !tls_cert_path.is_absolute() {
+                        *tls_cert_path =
+                            std::fs::canonicalize(parent.join(&tls_cert_path)).with_context(|| {
+                                format!(
+                                    "error taking canonical path to [serve].tls_cert_path {:?} in {:?}",
+                                    tls_cert_path, trunk_toml_path
+                                )
+                            })?;
                     }
                 }
             }
@@ -513,8 +533,8 @@ impl ConfigOpts {
                 g.address = g.address.or(l.address);
                 g.port = g.port.or(l.port);
                 g.proxy_ws = g.proxy_ws || l.proxy_ws;
-                g.tls_private_key_path = g.tls_private_key_path.or(l.tls_private_key_path);
-                g.tls_public_key_path = g.tls_public_key_path.or(l.tls_public_key_path);
+                g.tls_key_path = g.tls_key_path.or(l.tls_key_path);
+                g.tls_cert_path = g.tls_cert_path.or(l.tls_cert_path);
                 // NOTE: this can not be disabled in the cascade.
                 if l.no_autoreload {
                     g.no_autoreload = true;

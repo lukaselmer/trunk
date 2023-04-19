@@ -27,9 +27,9 @@ port = 8080
 open = false
 # Disable auto-reload of the web app.
 no_autoreload = false
-# The private/public key pair to use for TLS, which is enabled if both are set.
-# tls_private_key_path = "self_signed_certs/key.pem"
-# tls_public_key_path = "self_signed_certs/cert.pem"
+# The certificate/private key pair to use for TLS, which is enabled if both are set.
+# tls_key_path = "self_signed_certs/key.pem"
+# tls_cert_path = "self_signed_certs/cert.pem"
 
 [clean]
 # The output dir for all final assets.
